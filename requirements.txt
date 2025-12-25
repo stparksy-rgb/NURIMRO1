@@ -1,8 +1,0 @@
-streamlit
-pandas
-plotly
-openpyxl
-gspread
-google-auth
-google-auth-oauthlib
-streamlit-drawable-canvas
