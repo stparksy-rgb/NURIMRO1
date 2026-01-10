@@ -5133,18 +5133,20 @@ elif menu == "📝 영업 일지":
         
         # 상단 통계
         if len(prospects_df) > 0:
-            col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
+            col_s1, col_s2, col_s3, col_s4, col_s5, col_s6 = st.columns(6)
             총_건수 = len(prospects_df)
+            거래중 = len(prospects_df[prospects_df['영업단계'] == '거래중'])
+            거래중지 = len(prospects_df[prospects_df['영업단계'] == '거래중지'])
             미방문 = len(prospects_df[prospects_df['영업단계'] == '미방문'])
             유망 = len(prospects_df[prospects_df['영업단계'] == '유망'])
             상담중 = len(prospects_df[prospects_df['영업단계'].isin(['상담중', '견적', '협상'])])
-            탈락 = len(prospects_df[prospects_df['영업단계'] == '탈락'])
             
             col_s1.metric("📊 전체", f"{총_건수:,}개")
-            col_s2.metric("🆕 미방문", f"{미방문:,}개")
-            col_s3.metric("⭐ 유망", f"{유망:,}개")
-            col_s4.metric("💬 상담중", f"{상담중:,}개")
-            col_s5.metric("❌ 탈락", f"{탈락:,}개")
+            col_s2.metric("🟢 거래중", f"{거래중:,}개")
+            col_s3.metric("🟡 거래중지", f"{거래중지:,}개")
+            col_s4.metric("🔵 미방문", f"{미방문:,}개")
+            col_s5.metric("⭐ 유망", f"{유망:,}개")
+            col_s6.metric("💬 상담중", f"{상담중:,}개")
         
         st.markdown("---")
         
@@ -5203,7 +5205,7 @@ elif menu == "📝 영업 일지":
                     선택_업종 = st.selectbox("업종", 업종_목록, key="filter_type")
                 
                 with col_f3:
-                    단계_목록 = ['전체', '미방문', '유망', '상담중', '견적', '협상', '보류', '탈락']
+                    단계_목록 = ['전체', '거래중', '거래중지', '미방문', '유망', '상담중', '견적', '협상', '보류', '탈락']
                     선택_단계 = st.selectbox("영업단계", 단계_목록, key="filter_stage")
                 
                 with col_f4:
@@ -5258,7 +5260,7 @@ elif menu == "📝 영업 일지":
                 for idx, row in 페이지_df.iterrows():
                     실제_idx = row.name  # 원본 인덱스
                     단계_색상 = {
-                        '미방문': '🔵', '유망': '⭐', '상담중': '💬', 
+                        '거래중': '🟢', '거래중지': '🟡', '미방문': '🔵', '유망': '⭐', '상담중': '💬', 
                         '견적': '📋', '협상': '🤝', '보류': '⏸️', '탈락': '❌'
                     }
                     영업단계 = row.get('영업단계', '미방문')
