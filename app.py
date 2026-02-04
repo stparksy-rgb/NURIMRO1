@@ -383,36 +383,7 @@ st.markdown("""
         color: #000000 !important;
     }
     
-    /* ★★★ 선택된 값 텍스트 강제 표시 - 추가 ★★★ */
-    .stSelectbox [data-baseweb="select"] [data-testid="stMarkdownContainer"] {
-        color: #000000 !important;
-    }
-    
-    .stSelectbox [data-baseweb="select"] [aria-selected="true"] {
-        color: #000000 !important;
-    }
-    
-    /* ValueContainer - 선택된 값이 표시되는 영역 */
-    .stSelectbox [class*="ValueContainer"] {
-        color: #000000 !important;
-    }
-    
-    .stSelectbox [class*="ValueContainer"] * {
-        color: #000000 !important;
-    }
-    
-    /* SingleValue - 단일 선택값 */
-    .stSelectbox [class*="singleValue"],
-    .stSelectbox [class*="SingleValue"] {
-        color: #000000 !important;
-    }
-    
-    /* 모든 자식 요소에 검정색 강제 */
-    .stSelectbox [data-baseweb="select"] * {
-        color: #000000 !important;
-    }
-    
-    /* 드롭다운 화살표만 예외 */
+    /* 드롭다운 화살표 */
     .stSelectbox svg {
         fill: #000000 !important;
     }
@@ -696,22 +667,30 @@ BASE_RECEIVABLE_FILE = "data/base_receivables.csv"
 PRODUCTS_FILE = "data/products.csv"
 INVENTORY_FILE = "data/inventory.csv"
 COMPANY_FILE = "data/company_info.csv"
-FIFO_INVENTORY_FILE = "data/fifo_inventory.csv"  # FIFO 재고 데이터
-JANGBU_DATA_FILE = "data/jangbu_data.csv"  # 컴장부 데이터
 
 # 세션 상태 초기화
 if 'ledger_df' not in st.session_state:
     if os.path.exists(DATA_FILE):
-        st.session_state.ledger_df = pd.read_csv(DATA_FILE, parse_dates=['날짜'])
-        # 기존 데이터에 비고 컬럼이 없으면 추가
-        if '비고' not in st.session_state.ledger_df.columns:
-            st.session_state.ledger_df['비고'] = ''
-        # ✅ 2019-08-01 이전 불필요한 데이터 필터링 (로딩 속도 향상)
-        st.session_state.ledger_df = st.session_state.ledger_df[
-            st.session_state.ledger_df['날짜'] >= '2019-08-01'
-        ].reset_index(drop=True)
+        try:
+            st.session_state.ledger_df = pd.read_csv(DATA_FILE)
+            # 날짜 컬럼 변환
+            if '날짜' in st.session_state.ledger_df.columns:
+                st.session_state.ledger_df['날짜'] = pd.to_datetime(st.session_state.ledger_df['날짜'], errors='coerce')
+            # 기존 데이터에 비고 컬럼이 없으면 추가
+            if '비고' not in st.session_state.ledger_df.columns:
+                st.session_state.ledger_df['비고'] = ''
+            # 합계 컬럼이 없으면 추가
+            if '합계' not in st.session_state.ledger_df.columns:
+                st.session_state.ledger_df['합계'] = st.session_state.ledger_df['공급가액'].fillna(0) + st.session_state.ledger_df['부가세'].fillna(0)
+            # ✅ 2019-08-01 이전 불필요한 데이터 필터링 (로딩 속도 향상)
+            st.session_state.ledger_df = st.session_state.ledger_df[
+                st.session_state.ledger_df['날짜'] >= '2019-08-01'
+            ].reset_index(drop=True)
+        except Exception as e:
+            st.error(f"데이터 로딩 오류: {e}")
+            st.session_state.ledger_df = pd.DataFrame(columns=['날짜', '거래처', '품목', '수량', '단가', '공급가액', '부가세', '합계', '참조', '비고'])
     else:
-        st.session_state.ledger_df = pd.DataFrame(columns=['날짜', '거래처', '품목', '수량', '단가', '공급가액', '부가세', '참조', '비고'])
+        st.session_state.ledger_df = pd.DataFrame(columns=['날짜', '거래처', '품목', '수량', '단가', '공급가액', '부가세', '합계', '참조', '비고'])
 
 # 기초 미수금 초기화
 if 'base_receivables_df' not in st.session_state:
@@ -733,20 +712,6 @@ if 'inventory_df' not in st.session_state:
         st.session_state.inventory_df = pd.read_csv(INVENTORY_FILE)
     else:
         st.session_state.inventory_df = pd.DataFrame(columns=['품목명', '기초재고', '현재재고', '기준일자', '안전재고', '단위'])
-
-# FIFO 재고 데이터 초기화
-if 'fifo_inventory_df' not in st.session_state:
-    if os.path.exists(FIFO_INVENTORY_FILE):
-        st.session_state.fifo_inventory_df = pd.read_csv(FIFO_INVENTORY_FILE, parse_dates=['매입일'])
-    else:
-        st.session_state.fifo_inventory_df = pd.DataFrame(columns=['품목', '매입일', '매입처', '수량', '매입단가', '잔여수량'])
-
-# 컴장부 데이터 초기화
-if 'jangbu_df' not in st.session_state:
-    if os.path.exists(JANGBU_DATA_FILE):
-        st.session_state.jangbu_df = pd.read_csv(JANGBU_DATA_FILE, parse_dates=['날짜'])
-    else:
-        st.session_state.jangbu_df = pd.DataFrame(columns=['날짜', '거래처', '품목', '수량', '단가', '공급가액', '부가세', '참조'])
 
 # 사업자 정보 초기화
 if 'company_info' not in st.session_state:
@@ -803,121 +768,160 @@ if 'company_info' not in st.session_state:
 
 # 데이터 저장 함수
 def save_data():
+    # 저장 전 날짜순 정렬
+    if len(st.session_state.ledger_df) > 0:
+        st.session_state.ledger_df['날짜'] = pd.to_datetime(st.session_state.ledger_df['날짜'])
+        st.session_state.ledger_df = st.session_state.ledger_df.sort_values('날짜').reset_index(drop=True)
     st.session_state.ledger_df.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
 
 def calculate_receivable(거래처, df=None):
-    """거래처별 미수금 실시간 계산 (전체 데이터 기반)
-    
-    컴장부 데이터 구조:
-    - 판매: 공급가액 > 0, 내용에 '입금' 없음
-    - 입금: 공급가액 > 0, 내용에 '입금' 포함
-    
-    미수금 = 판매 + 부가세 - 입금
-    """
+    """거래처별 미수금 계산 - 기초미수금에 등록된 거래처만"""
     if df is None:
         df = st.session_state.ledger_df
     
+    base_recv = st.session_state.base_receivables_df
+    
+    if len(base_recv) == 0:
+        return 0
+    
+    거래처_기초 = base_recv[base_recv['거래처'] == 거래처]
+    if len(거래처_기초) == 0:
+        return 0  # 등록 안된 거래처는 미수금 0
+    
+    기초값 = 거래처_기초['기초미수금'].values[0]
+    if 기초값 <= 0:
+        return 0
+    
+    기초미수금 = 기초값
+    
+    try:
+        기준일자 = pd.to_datetime(str(거래처_기초['기준일자'].values[0]))
+    except:
+        return 기초미수금
+    
     if len(df) == 0:
-        return 0
+        return 기초미수금
     
-    거래처_df = df[df['거래처'] == 거래처]
+    거래처df = df[df['거래처'] == 거래처].copy()
+    if len(거래처df) == 0:
+        return 기초미수금
     
-    if len(거래처_df) == 0:
-        return 0
+    거래처df['날짜'] = pd.to_datetime(거래처df['날짜'])
+    거래처df = 거래처df[거래처df['날짜'] > 기준일자]
     
-    총_판매 = 0
-    총_부가세 = 0
-    총_입금 = 0
+    if len(거래처df) == 0:
+        return 기초미수금
     
-    for _, row in 거래처_df.iterrows():
-        품목 = str(row.get('품목', '') or '')
-        참조 = str(row.get('참조', '') or '')
-        공급가액 = row.get('공급가액', 0) or 0
-        부가세 = row.get('부가세', 0) or 0
-        
-        # 양수 거래만 처리 (판매/입금)
-        if 공급가액 > 0:
-            if '입금' in 품목 or '입금' in 참조:
-                # 입금
-                총_입금 += 공급가액
-            else:
-                # 판매
-                총_판매 += 공급가액
-                총_부가세 += 부가세
+    판매m = (거래처df['참조'] == '=외출') | ((거래처df['공급가액'] > 0) & (~거래처df['참조'].fillna('').str.contains('입금|출금')))
+    입금m = (거래처df['참조'] == '=입금') | (거래처df['참조'].fillna('').str.contains('입금'))
     
-    # 미수금 = 판매 + 부가세 - 입금
-    미수금 = 총_판매 + 총_부가세 - 총_입금
+    총판매 = 거래처df.loc[판매m, '공급가액'].sum()
+    총부가세 = 거래처df.loc[판매m, '부가세'].sum()
+    총입금 = 거래처df.loc[입금m, '공급가액'].sum()
     
-    return 미수금
+    return 기초미수금 + 총판매 + 총부가세 - 총입금
 
 def calculate_payable(거래처, df=None):
-    """거래처별 미지급금 계산 (매입처에 줄 돈)
-    
-    미지급금 = |매입| + |매입부가세| - |출금/결제|
-    """
+    """거래처별 미지급금 계산 - 기초미수금에 등록된 거래처만"""
     if df is None:
         df = st.session_state.ledger_df
     
+    base_recv = st.session_state.base_receivables_df
+    
+    if len(base_recv) == 0:
+        return 0
+    
+    거래처_기초 = base_recv[base_recv['거래처'] == 거래처]
+    if len(거래처_기초) == 0:
+        return 0
+    
+    기초값 = 거래처_기초['기초미수금'].values[0]
+    if 기초값 >= 0:
+        return 0
+    
+    기초미지급금 = abs(기초값)
+    
+    try:
+        기준일자 = pd.to_datetime(str(거래처_기초['기준일자'].values[0]))
+    except:
+        return 기초미지급금
+    
     if len(df) == 0:
-        return 0
+        return 기초미지급금
     
-    거래처_df = df[df['거래처'] == 거래처]
+    거래처df = df[df['거래처'] == 거래처].copy()
+    if len(거래처df) == 0:
+        return 기초미지급금
     
-    if len(거래처_df) == 0:
-        return 0
+    거래처df['날짜'] = pd.to_datetime(거래처df['날짜'])
+    거래처df = 거래처df[거래처df['날짜'] > 기준일자]
     
-    총_매입 = 0
-    총_부가세 = 0
-    총_출금 = 0
+    if len(거래처df) == 0:
+        return 기초미지급금
     
-    for _, row in 거래처_df.iterrows():
-        품목 = str(row.get('품목', '') or '')
-        참조 = str(row.get('참조', '') or '')
-        공급가액 = row.get('공급가액', 0) or 0
-        부가세 = row.get('부가세', 0) or 0
-        
-        # 음수 거래만 처리 (매입/출금)
-        if 공급가액 < 0:
-            if '입금' in 품목 or '출금' in 품목 or '출금' in 참조:
-                # 출금/결제
-                총_출금 += abs(공급가액)
-            else:
-                # 매입
-                총_매입 += abs(공급가액)
-                총_부가세 += abs(부가세)
+    매입m = (거래처df['참조'] == '=외입') | ((거래처df['공급가액'] < 0) & (~거래처df['참조'].fillna('').str.contains('출금|입금')))
+    출금m = (거래처df['참조'] == '=출금') | (거래처df['참조'].fillna('').str.contains('출금'))
     
-    # 미지급금 = 매입 + 부가세 - 출금
-    미지급금 = 총_매입 + 총_부가세 - 총_출금
+    총매입 = abs(거래처df.loc[매입m, '공급가액'].sum())
+    총부가세 = abs(거래처df.loc[매입m, '부가세'].sum())
+    총출금 = abs(거래처df.loc[출금m, '공급가액'].sum())
     
-    return 미지급금
+    return 기초미지급금 + 총매입 + 총부가세 - 총출금
 
 def calculate_all_receivables(df=None):
-    """전체 거래처별 미수금 = base_receivables (컴장부 GULREST)"""
+    """전체 미수금 - 기초미수금에 등록된 거래처만"""
+    if df is None:
+        df = st.session_state.ledger_df
     base_recv = st.session_state.base_receivables_df.copy()
     
     if len(base_recv) == 0:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=['거래처', '미수금', '최근거래일'])
     
-    # 양수만 (미수금)
-    미수금_df = base_recv[base_recv['기초미수금'] > 0].copy()
-    미수금_df = 미수금_df.rename(columns={'기초미수금': '미수금'})
-    미수금_df['최근거래일'] = 미수금_df['기준일자']
+    미수금_거래처 = base_recv[base_recv['기초미수금'] > 0]['거래처'].unique()
     
-    return 미수금_df
+    결과 = []
+    for 거래처 in 미수금_거래처:
+        미수금 = calculate_receivable(거래처, df)
+        if 미수금 > 0:
+            거래처df = df[df['거래처'] == 거래처] if len(df) > 0 else pd.DataFrame()
+            if len(거래처df) > 0:
+                최근일 = pd.to_datetime(거래처df['날짜']).max().strftime('%Y-%m-%d')
+            else:
+                거래처_기초 = base_recv[base_recv['거래처'] == 거래처]
+                최근일 = 거래처_기초['기준일자'].values[0] if len(거래처_기초) > 0 else ''
+            결과.append({'거래처': 거래처, '미수금': 미수금, '최근거래일': 최근일})
+    
+    if not 결과:
+        return pd.DataFrame(columns=['거래처', '미수금', '최근거래일'])
+    return pd.DataFrame(결과).sort_values('미수금', ascending=False)
 
 def calculate_all_payables(df=None):
-    """전체 거래처별 미지급금 = base_receivables (컴장부 GULREST, 음수)"""
+    """전체 미지급금 - 기초미수금에 등록된 거래처만"""
+    if df is None:
+        df = st.session_state.ledger_df
     base_recv = st.session_state.base_receivables_df.copy()
     
     if len(base_recv) == 0:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=['거래처', '미지급금', '최근거래일'])
     
-    # 음수만 (미지급금)
-    미지급금_df = base_recv[base_recv['기초미수금'] < 0].copy()
-    미지급금_df['미지급금'] = 미지급금_df['기초미수금'].abs()
-    미지급금_df['최근거래일'] = 미지급금_df['기준일자']
+    미지급금_거래처 = base_recv[base_recv['기초미수금'] < 0]['거래처'].unique()
     
-    return 미지급금_df
+    결과 = []
+    for 거래처 in 미지급금_거래처:
+        미지급금 = calculate_payable(거래처, df)
+        if 미지급금 > 0:
+            거래처df = df[df['거래처'] == 거래처] if len(df) > 0 else pd.DataFrame()
+            if len(거래처df) > 0:
+                최근일 = pd.to_datetime(거래처df['날짜']).max().strftime('%Y-%m-%d')
+            else:
+                거래처_기초 = base_recv[base_recv['거래처'] == 거래처]
+                최근일 = 거래처_기초['기준일자'].values[0] if len(거래처_기초) > 0 else ''
+            결과.append({'거래처': 거래처, '미지급금': 미지급금, '최근거래일': 최근일})
+    
+    if not 결과:
+        return pd.DataFrame(columns=['거래처', '미지급금', '최근거래일'])
+    return pd.DataFrame(결과).sort_values('미지급금', ascending=False)
+
 
 def save_base_receivables():
     st.session_state.base_receivables_df.to_csv(BASE_RECEIVABLE_FILE, index=False, encoding='utf-8-sig')
@@ -927,12 +931,6 @@ def save_products():
 
 def save_inventory():
     st.session_state.inventory_df.to_csv(INVENTORY_FILE, index=False, encoding='utf-8-sig')
-
-def save_fifo_inventory():
-    st.session_state.fifo_inventory_df.to_csv(FIFO_INVENTORY_FILE, index=False, encoding='utf-8-sig')
-
-def save_jangbu_data():
-    st.session_state.jangbu_df.to_csv(JANGBU_DATA_FILE, index=False, encoding='utf-8-sig')
 
 def save_company_info():
     """사업자 정보를 JSON 파일로 저장"""
@@ -1190,7 +1188,7 @@ if 'first_load' not in st.session_state:
     st.session_state.first_load = True
     st.session_state.default_menu = "👥 거래처 관리"
 
-menu_list = ["🏠 대시보드", "➕ 거래 입력", "📄 거래 내역", "📊 통계 분석", "📈 실적분석", "💰 외상 관리", "🧾 회계 관리", "📦 품목 관리", "📋 재고 관리", "👥 거래처 관리", "📅 방문 일정", "📝 영업 일지", "📜 협약서 관리", "🔧 설정"]
+menu_list = ["🏠 대시보드", "➕ 거래 입력", "📄 거래 내역", "📊 통계 분석", "💰 외상 관리", "🧾 회계 관리", "📦 품목 관리", "📋 재고 관리", "👥 거래처 관리", "📅 방문 일정", "📝 영업 일지", "📜 협약서 관리", "🔧 설정"]
 default_index = menu_list.index("👥 거래처 관리") if st.session_state.get('first_load', False) else 0
 
 menu = st.sidebar.radio(
@@ -1358,7 +1356,7 @@ elif menu == "➕ 거래 입력":
         else:
             거래처 = st.text_input("거래처명 입력", key="거래처입력")
     with col3:
-        거래유형 = st.selectbox("거래 유형", ["=외출 (판매)", "=입금 (수금)", "=외입 (매입)", "=출금 (결제)"])
+        거래유형 = st.selectbox("거래 유형", ["=외출 (판매)", "=입금 (수금)", "=외입 (매입)", "=출금 (결제)", "=기타 (할인/조정)", "=샘플 (무상제공)"])
         거래유형_값 = 거래유형.split(" ")[0]
     
     # ✅ 선택된 거래처 표시 + 미수금 (시인성 개선 - 검정색 글자)
@@ -1371,12 +1369,7 @@ elif menu == "➕ 거래 입력":
             </div>
             """, unsafe_allow_html=True)
         with col_info2:
-            # 기초미수금 + 거래미수금 합산
-            기초미수금_dict = st.session_state.base_receivables_df.set_index('거래처')['기초미수금'].to_dict() if len(st.session_state.base_receivables_df) > 0 else {}
-            기초미수금 = 기초미수금_dict.get(거래처, 0)
-            거래미수금 = calculate_receivable(거래처)
-            미수금 = 기초미수금 + 거래미수금
-            
+            미수금 = calculate_receivable(거래처)
             if 미수금 > 0:
                 st.markdown(f"""
                 <div style='background-color: #fff3e0; border: 2px solid #e65100; border-radius: 10px; padding: 15px;'>
@@ -1398,8 +1391,47 @@ elif menu == "➕ 거래 입력":
     
     st.markdown("---")
     
-    # ========== 품목 입력 영역 ==========
-    st.markdown("### 📦 품목 추가")
+    # ========== 입금/출금인 경우 금액만 입력 ==========
+    if 거래유형_값 in ["=입금", "=출금"]:
+        st.markdown("### 💰 입금/출금 입력")
+        
+        col_money1, col_money2 = st.columns(2)
+        with col_money1:
+            입금_금액 = st.number_input("금액", min_value=0, value=0, step=10000, key="입금금액")
+        with col_money2:
+            입금_비고 = st.text_input("비고 (선택)", placeholder="예: 현금, 계좌이체 등", key="입금비고")
+        
+        st.markdown(f"**입력 금액:** {입금_금액:,.0f}원")
+        
+        if st.button("💾 저장", type="primary", use_container_width=True, key="입금저장"):
+            if 거래처 and 입금_금액 > 0:
+                # 입금/출금 거래 저장
+                new_row = pd.DataFrame([{
+                    '날짜': pd.to_datetime(거래날짜).strftime('%Y-%m-%d'),
+                    '거래처': 거래처,
+                    '품목': '입금' if 거래유형_값 == "=입금" else '출금',
+                    '수량': 0,
+                    '단가': 0,
+                    '매입단가': 0,
+                    '공급가액': 입금_금액,
+                    '부가세': 0,
+                    '합계': 입금_금액,
+                    '마진': 0,
+                    '참조': 거래유형_값,
+                    '비고': 입금_비고 if 입금_비고 else ''
+                }])
+                
+                st.session_state.ledger_df = pd.concat([st.session_state.ledger_df, new_row], ignore_index=True)
+                save_data()
+                
+                st.success(f"✅ {거래처} {'입금' if 거래유형_값 == '=입금' else '출금'} {입금_금액:,.0f}원 저장!")
+                st.rerun()
+            else:
+                st.error("❌ 거래처와 금액을 입력해주세요.")
+    
+    # ========== 판매/매입인 경우 품목 입력 ==========
+    else:
+        st.markdown("### 📦 품목 추가")
     
     col_left, col_right = st.columns([2, 1])
     
@@ -1637,6 +1669,7 @@ elif menu == "➕ 거래 입력":
                         '단가': item['단가'],
                         '공급가액': item['공급가액'],
                         '부가세': item['부가세'],
+                        '합계': abs(item['공급가액']) + abs(item['부가세']),
                         '참조': 거래유형_값,
                         '비고': ''
                     }])
@@ -1706,216 +1739,112 @@ elif menu == "📄 거래 내역":
             # 거래 유형 (외출이 기본 - 판매가 더 많음)
             입력_거래유형 = st.selectbox(
                 "유형", 
-                ["=외출 (판매)", "=입금 (수금)", "=외입 (매입)", "=출금 (결제)"], 
+                ["=외출 (판매)", "=입금 (수금)", "=외입 (매입)", "=출금 (결제)", "=기타 (할인/조정)", "=샘플 (무상제공)"], 
                 key="quick_type"
             )
             # 실제 저장할 값 추출
             입력_거래유형_값 = 입력_거래유형.split(" ")[0]
         
-        # ★★★ 선택된 거래처 & 미수금 크게 표시 ★★★
-        if 입력_거래처:
-            # 미수금 계산
-            기초미수금_dict = st.session_state.base_receivables_df.set_index('거래처')['기초미수금'].to_dict() if len(st.session_state.base_receivables_df) > 0 else {}
-            기초미수금 = 기초미수금_dict.get(입력_거래처, 0)
-            거래미수금 = calculate_receivable(입력_거래처)
-            총_미수금 = 기초미수금 + 거래미수금
+        # 2줄: 입금/출금인 경우 금액만, 판매/매입인 경우 품목 입력
+        if 입력_거래유형_값 in ["=입금", "=출금"]:
+            # 입금/출금: 금액만 입력
+            col1, col2, col3 = st.columns([2, 1, 2])
+            with col1:
+                입력_금액 = st.number_input("금액", min_value=0, value=0, step=10000, format="%d", key="quick_money")
+            with col2:
+                st.metric("합계", f"{입력_금액:,.0f}원")
+            with col3:
+                입력_비고 = st.text_input("📝 비고", key="quick_memo", placeholder="현금, 계좌이체 등")
             
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown(f"""
-                <div style='background-color: #1565c0; border-radius: 8px; padding: 12px; margin: 5px 0;'>
-                    <span style='color: #ffffff; font-size: 1.5rem; font-weight: bold;'>🏢 {입력_거래처}</span>
-                </div>
-                """, unsafe_allow_html=True)
-            with col_b:
-                if 총_미수금 > 0:
-                    st.markdown(f"""
-                    <div style='background-color: #e65100; border-radius: 8px; padding: 12px; margin: 5px 0;'>
-                        <span style='color: #ffffff; font-size: 1.5rem; font-weight: bold;'>⚠️ 미수금: {총_미수금:,.0f}원</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                elif 총_미수금 < 0:
-                    st.markdown(f"""
-                    <div style='background-color: #2e7d32; border-radius: 8px; padding: 12px; margin: 5px 0;'>
-                        <span style='color: #ffffff; font-size: 1.5rem; font-weight: bold;'>💰 선수금: {abs(총_미수금):,.0f}원</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div style='background-color: #2e7d32; border-radius: 8px; padding: 12px; margin: 5px 0;'>
-                        <span style='color: #ffffff; font-size: 1.5rem; font-weight: bold;'>✅ 미수금 없음</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-        
-        # 2줄: 품목(자동완성), 수량, 단가, 공급가액(자동계산)
-        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-        with col1:
-            # 품목 자동완성 - selectbox + 검색 기능
-            품목_검색어 = st.text_input("품목 검색 (2글자 이상)", key="quick_product_search", placeholder="품목명 입력...")
-            
-            # 최근 가격 정보 저장용
-            최근_단가 = 0
-            
-            # 2글자 이상 입력시 필터링된 품목 표시
-            if len(품목_검색어) >= 2:
-                필터_품목 = [p for p in 품목_list if 품목_검색어.lower() in p.lower()]
-                if 필터_품목:
-                    # ✅ 검색 결과에 최근 가격 함께 표시 (해당 거래처 기준!)
-                    품목_가격_목록 = []
-                    품목_원본_매핑 = {}  # 표시용 → 원본 품목명 매핑
-                    
-                    for 품목명 in 필터_품목[:20]:
-                        # 해당 품목의 최근 가격 조회 (거래처 기준 우선!)
-                        if len(st.session_state.ledger_df) > 0:
-                            # 1. 선택된 거래처 기준 가격 먼저 조회
-                            if 입력_거래처:
-                                거래처_품목_df = st.session_state.ledger_df[
-                                    (st.session_state.ledger_df['거래처'] == 입력_거래처) &
-                                    (st.session_state.ledger_df['품목'] == 품목명) &
-                                    (st.session_state.ledger_df['단가'] > 0)
-                                ].sort_values('날짜', ascending=False)
-                                
-                                if len(거래처_품목_df) > 0:
-                                    가격 = int(거래처_품목_df.iloc[0]['단가'])
-                                    표시_품목 = f"{품목명} 【{가격:,}원】"
-                                else:
-                                    # 해당 거래처에 없으면 전체에서 조회
-                                    전체_품목_df = st.session_state.ledger_df[
-                                        (st.session_state.ledger_df['품목'] == 품목명) &
-                                        (st.session_state.ledger_df['단가'] > 0)
-                                    ].sort_values('날짜', ascending=False)
-                                    if len(전체_품목_df) > 0:
-                                        가격 = int(전체_품목_df.iloc[0]['단가'])
-                                        표시_품목 = f"{품목명} 【{가격:,}원*】"  # *표시로 타 거래처 가격임을 표시
-                                    else:
-                                        표시_품목 = f"{품목명} 【-】"
-                            else:
-                                # 거래처 미선택: 전체에서 조회
-                                품목_df = st.session_state.ledger_df[
-                                    (st.session_state.ledger_df['품목'] == 품목명) &
-                                    (st.session_state.ledger_df['단가'] > 0)
-                                ].sort_values('날짜', ascending=False)
-                                
-                                if len(품목_df) > 0:
-                                    가격 = int(품목_df.iloc[0]['단가'])
-                                    표시_품목 = f"{품목명} 【{가격:,}원】"
-                                else:
-                                    표시_품목 = f"{품목명} 【-】"
-                        else:
-                            표시_품목 = f"{품목명} 【-】"
-                        
-                        품목_가격_목록.append(표시_품목)
-                        품목_원본_매핑[표시_품목] = 품목명
-                    
-                    선택_품목 = st.selectbox(
-                        f"🔍 검색결과 ({len(필터_품목)}건) - 【해당 거래처 단가】", 
-                        ["직접입력: " + 품목_검색어] + 품목_가격_목록,
-                        key="quick_product_select"
-                    )
-                    
-                    # 선택된 품목에서 원본 품목명 추출
-                    if 선택_품목.startswith("직접입력:"):
-                        입력_품목 = 품목_검색어
-                    elif 선택_품목 in 품목_원본_매핑:
-                        입력_품목 = 품목_원본_매핑[선택_품목]
+            입력_품목 = "입금" if 입력_거래유형_값 == "=입금" else "출금"
+            입력_수량 = 0
+            입력_단가 = 0
+            입력_공급가액 = 입력_금액
+            입력_부가세 = 0
+        else:
+            # 판매/매입: 품목, 수량, 단가 입력
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            with col1:
+                # 품목 자동완성 - selectbox + 검색 기능
+                품목_검색어 = st.text_input("품목 검색 (2글자 이상)", key="quick_product_search", placeholder="품목명 입력...")
+                
+                # 2글자 이상 입력시 필터링된 품목 표시
+                if len(품목_검색어) >= 2:
+                    필터_품목 = [p for p in 품목_list if 품목_검색어.lower() in p.lower()]
+                    if 필터_품목:
+                        입력_품목 = st.selectbox(
+                            f"🔍 검색결과 ({len(필터_품목)}건)", 
+                            ["직접입력: " + 품목_검색어] + 필터_품목[:20],  # 최대 20개
+                            key="quick_product_select"
+                        )
+                        # "직접입력:" 선택시 검색어 그대로 사용
+                        if 입력_품목.startswith("직접입력:"):
+                            입력_품목 = 품목_검색어
                     else:
-                        입력_품목 = 선택_품목.split(" 【")[0] if " 【" in 선택_품목 else 선택_품목
-                    
-                    # ✅ 선택된 품목 크게 표시 + 상세 가격 정보
-                    if 입력_품목 and not 입력_품목.startswith("직접입력") and len(st.session_state.ledger_df) > 0:
-                        # 거래처가 선택된 경우
-                        if 입력_거래처:
-                            거래처_품목_df = st.session_state.ledger_df[
-                                (st.session_state.ledger_df['거래처'] == 입력_거래처) & 
-                                (st.session_state.ledger_df['품목'] == 입력_품목) &
-                                (st.session_state.ledger_df['단가'] > 0)
-                            ].sort_values('날짜', ascending=False)
-                            
-                            if len(거래처_품목_df) > 0:
-                                최근_단가 = int(거래처_품목_df.iloc[0]['단가'])
-                                최근_날짜 = 거래처_품목_df.iloc[0]['날짜'].strftime('%Y-%m-%d') if hasattr(거래처_품목_df.iloc[0]['날짜'], 'strftime') else str(거래처_품목_df.iloc[0]['날짜'])[:10]
-                                st.markdown(f"""
-                                <div style='background-color: #2e7d32; border-radius: 8px; padding: 10px; margin: 5px 0;'>
-                                    <span style='color: #ffffff; font-size: 1.3rem; font-weight: bold;'>📦 {입력_품목}</span><br>
-                                    <span style='color: #ffff00; font-size: 1.5rem; font-weight: bold;'>💰 {최근_단가:,}원</span>
-                                    <span style='color: #ffffff; font-size: 1rem;'>({최근_날짜})</span>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"""
-                                <div style='background-color: #555555; border-radius: 8px; padding: 10px; margin: 5px 0;'>
-                                    <span style='color: #ffffff; font-size: 1.3rem; font-weight: bold;'>📦 {입력_품목}</span><br>
-                                    <span style='color: #ffcc00; font-size: 1.2rem;'>⚠️ 해당 거래처 거래 내역 없음</span>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        else:
-                            # 거래처 미선택: 전체에서 조회
-                            전체_품목_df = st.session_state.ledger_df[
-                                (st.session_state.ledger_df['품목'] == 입력_품목) &
-                                (st.session_state.ledger_df['단가'] > 0)
-                            ].sort_values('날짜', ascending=False)
-                            if len(전체_품목_df) > 0:
-                                최근_단가 = int(전체_품목_df.iloc[0]['단가'])
-                                최근_거래처 = 전체_품목_df.iloc[0]['거래처']
-                                st.markdown(f"""
-                                <div style='background-color: #1565c0; border-radius: 8px; padding: 10px; margin: 5px 0;'>
-                                    <span style='color: #ffffff; font-size: 1.3rem; font-weight: bold;'>📦 {입력_품목}</span><br>
-                                    <span style='color: #ffff00; font-size: 1.3rem;'>💰 {최근_거래처}: {최근_단가:,}원</span>
-                                </div>
-                                """, unsafe_allow_html=True)
+                        입력_품목 = 품목_검색어
+                        st.caption("검색 결과 없음 - 직접 입력됩니다")
                 else:
                     입력_품목 = 품목_검색어
-                    st.caption("검색 결과 없음 - 직접 입력됩니다")
+                    if 품목_검색어:
+                        st.caption("2글자 이상 입력하면 품목 검색")
+            
+            with col2:
+                입력_수량 = st.number_input("수량", min_value=0, value=0, step=1, format="%d", key="quick_qty")
+            with col3:
+                입력_단가 = st.number_input("단가", min_value=0, value=0, step=100, format="%d", key="quick_price")
+            with col4:
+                # 공급가액 자동 계산 (수정 불가)
+                자동_공급가액 = 입력_수량 * 입력_단가
+                st.text_input("공급가액", value=f"{자동_공급가액:,}", disabled=True, key="quick_amount_display")
+                입력_공급가액 = 자동_공급가액
+            
+            # 부가세 및 비고
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                부가세_적용 = st.checkbox("부가세 10%", value=True if 입력_거래유형_값 in ["=외출", "=외입"] else False, key="quick_tax")
+                입력_부가세 = round(입력_공급가액 * 0.1) if 부가세_적용 else 0
+            with col2:
+                st.metric("합계", f"{입력_공급가액 + 입력_부가세:,.0f}원")
+            with col3:
+                입력_비고 = st.text_input("📝 비고", key="quick_memo", placeholder="특이사항")
+        
+        # 저장 버튼
+        if st.button("💾 저장", type="primary", use_container_width=True, key="quick_save"):
+            if not 입력_거래처:
+                st.error("❌ 거래처를 선택해주세요.")
+            elif 입력_거래유형_값 in ["=입금", "=출금"] and 입력_공급가액 <= 0:
+                st.error("❌ 금액을 입력해주세요.")
+            elif 입력_거래유형_값 in ["=외출", "=외입"] and (not 입력_품목 or 입력_공급가액 <= 0):
+                st.error("❌ 품목과 금액을 입력해주세요.")
             else:
-                입력_품목 = 품목_검색어
-                if 품목_검색어:
-                    st.caption("2글자 이상 입력하면 품목 검색")
-        
-        with col2:
-            입력_수량 = st.number_input("수량", min_value=0, value=0, step=1, format="%d", key="quick_qty")
-        with col3:
-            입력_단가 = st.number_input("단가", min_value=0, value=0, step=100, format="%d", key="quick_price")
-        with col4:
-            # 공급가액 자동 계산 (수정 불가)
-            자동_공급가액 = 입력_수량 * 입력_단가
-            st.text_input("공급가액", value=f"{자동_공급가액:,}", disabled=True, key="quick_amount_display")
-            입력_공급가액 = 자동_공급가액
-        
-        # 부가세 및 저장
-        col1, col2, col3, col4 = st.columns([1, 1, 2, 2])
-        with col1:
-            부가세_적용 = st.checkbox("부가세 10%", value=True if 입력_거래유형_값 in ["=외출", "=외입"] else False, key="quick_tax")
-            입력_부가세 = round(입력_공급가액 * 0.1) if 부가세_적용 else 0
-        with col2:
-            st.metric("합계", f"{입력_공급가액 + 입력_부가세:,.0f}원")
-        with col3:
-            입력_비고 = st.text_input("📝 비고", key="quick_memo", placeholder="특이사항")
-        with col4:
-            if st.button("💾 저장", type="primary", use_container_width=True, key="quick_save"):
-                if not 입력_거래처:
-                    st.error("❌ 거래처를 선택해주세요.")
-                else:
-                    new_row = pd.DataFrame([{
-                        '날짜': pd.to_datetime(입력_날짜),
-                        '거래처': 입력_거래처,
-                        '품목': 입력_품목 if 입력_품목 else 입력_거래유형_값.replace("=", ""),
-                        '수량': 입력_수량,
-                        '단가': 입력_단가,
-                        '공급가액': 입력_공급가액,
-                        '부가세': 입력_부가세,
-                        '참조': 입력_거래유형_값,
-                        '비고': 입력_비고
-                    }])
-                    
-                    st.session_state.ledger_df = pd.concat([st.session_state.ledger_df, new_row], ignore_index=True)
-                    save_data()
-                    st.success(f"✅ 저장 완료! {입력_거래처} - {입력_공급가액 + 입력_부가세:,.0f}원")
-                    st.rerun()
+                new_row = pd.DataFrame([{
+                    '날짜': pd.to_datetime(입력_날짜),
+                    '거래처': 입력_거래처,
+                    '품목': 입력_품목 if 입력_품목 else 입력_거래유형_값.replace("=", ""),
+                    '수량': 입력_수량,
+                    '단가': 입력_단가,
+                    '공급가액': 입력_공급가액,
+                    '부가세': 입력_부가세,
+                    '합계': 입력_공급가액 + 입력_부가세,
+                    '참조': 입력_거래유형_값,
+                    '비고': 입력_비고
+                }])
+                
+                st.session_state.ledger_df = pd.concat([st.session_state.ledger_df, new_row], ignore_index=True)
+                save_data()
+                st.success(f"✅ 저장 완료! {입력_거래처} - {입력_공급가액 + 입력_부가세:,.0f}원")
+                st.rerun()
     
     st.markdown("---")
     
     if len(df) == 0:
-        st.info("아직 거래 내역이 없습니다.")
+        st.warning("⚠️ 아직 거래 내역이 없습니다.")
+        st.info("""
+        **데이터가 표시되지 않는 경우 확인하세요:**
+        1. GitHub에 `data/ledger.csv` 파일이 업로드되어 있는지 확인
+        2. 파일명이 정확히 `ledger.csv`인지 확인
+        3. 위의 '빠른 거래 입력'으로 새 거래를 입력해보세요
+        """)
     else:
         # 필터
         col1, col2, col3 = st.columns(3)
@@ -1927,19 +1856,13 @@ elif menu == "📄 거래 내역":
         with col3:
             검색어 = st.text_input("품목 검색", "")
         
-        # 미수금 실시간 표시 - 기초미수금 + 거래 누적 합산
+        # 미수금 실시간 표시 - base_receivables에서 GULREST 값 직접 사용
         if "전체" not in 거래처_필터 and len(거래처_필터) == 1:
             선택거래처 = 거래처_필터[0]
             
-            # 기초미수금 (컴장부 GULREST)
+            # 미수금은 base_receivables에서 직접 가져옴 (컴장부 GULREST)
             기초미수금_dict = st.session_state.base_receivables_df.set_index('거래처')['기초미수금'].to_dict() if len(st.session_state.base_receivables_df) > 0 else {}
-            기초미수금 = 기초미수금_dict.get(선택거래처, 0)
-            
-            # 거래 기반 미수금 계산 (실시간)
-            거래미수금 = calculate_receivable(선택거래처)
-            
-            # 총 미수금 = 기초미수금 + 거래미수금
-            미수금 = 기초미수금 + 거래미수금
+            미수금 = 기초미수금_dict.get(선택거래처, 0)
             
             # 미수금 표시 (검정색 글자)
             if 미수금 > 0:
@@ -1975,33 +1898,124 @@ elif menu == "📄 거래 내역":
         
         st.markdown(f"### 총 {len(df_filtered)}건")
         
-        # 미수금 계산 함수 - 기초미수금 + 거래 누적 합산
-        def 거래처별_미수금_계산(거래처명):
-            """거래처별 현재 미수금 = 기초미수금 + 거래미수금"""
-            # 기초미수금
-            기초미수금_dict = st.session_state.base_receivables_df.set_index('거래처')['기초미수금'].to_dict() if len(st.session_state.base_receivables_df) > 0 else {}
-            기초미수금 = 기초미수금_dict.get(거래처명, 0)
-            # 거래 기반 미수금
-            거래미수금 = calculate_receivable(거래처명)
-            return 기초미수금 + 거래미수금
+        # 누적 미수금 계산 함수
+        def 누적_미수금_계산(df):
+            """각 거래 시점까지의 누적 미수금 계산 (기준일자 당일 거래도 개별 누적)"""
+            if len(df) == 0:
+                return df
+            
+            # 기초미수금 딕셔너리
+            base_recv = st.session_state.base_receivables_df
+            기초미수금_dict = {}
+            기준일자_dict = {}
+            if len(base_recv) > 0:
+                for _, row in base_recv.iterrows():
+                    거래처 = row['거래처']
+                    기초값 = row['기초미수금']
+                    if 기초값 > 0:  # 미수금인 경우만
+                        기초미수금_dict[거래처] = 기초값
+                        기준일자_dict[거래처] = pd.to_datetime(row['기준일자'])
+            
+            # 원본 인덱스 보존
+            df = df.copy()
+            df['원본인덱스'] = df.index
+            
+            # 날짜순 정렬 (오래된 것부터, 같은 날짜면 인덱스순)
+            df['날짜_dt'] = pd.to_datetime(df['날짜'])
+            df_sorted = df.sort_values(['거래처', '날짜_dt', '원본인덱스']).reset_index(drop=True)
+            
+            # 기준일자 당일 거래 총합 계산 (시작값 역산용)
+            기준일_거래합계 = {}
+            for 거래처 in 기초미수금_dict.keys():
+                기준일자 = 기준일자_dict.get(거래처)
+                if 기준일자:
+                    # 해당 거래처의 기준일자 당일 거래만 필터
+                    당일_거래 = df_sorted[(df_sorted['거래처'] == 거래처) & 
+                                        (df_sorted['날짜_dt'] == 기준일자)]
+                    합계 = 0
+                    for _, row in 당일_거래.iterrows():
+                        공급가액 = row['공급가액'] if pd.notna(row['공급가액']) else 0
+                        부가세 = row['부가세'] if pd.notna(row['부가세']) else 0
+                        참조 = str(row['참조']) if pd.notna(row['참조']) else ''
+                        if 참조 == '=입금' or '입금' in 참조:
+                            합계 -= 공급가액
+                        elif 참조 == '=외출' or (공급가액 > 0 and '입금' not in 참조 and '출금' not in 참조):
+                            합계 += 공급가액 + 부가세
+                    기준일_거래합계[거래처] = 합계
+            
+            # 누적 미수금 계산
+            누적미수금_list = []
+            현재_미수금 = {}
+            
+            for idx, row in df_sorted.iterrows():
+                거래처 = row['거래처']
+                날짜 = row['날짜_dt']
+                공급가액 = row['공급가액'] if pd.notna(row['공급가액']) else 0
+                부가세 = row['부가세'] if pd.notna(row['부가세']) else 0
+                참조 = str(row['참조']) if pd.notna(row['참조']) else ''
+                
+                # 기초미수금 등록 안 된 거래처는 0
+                if 거래처 not in 기초미수금_dict:
+                    누적미수금_list.append(0)
+                    continue
+                
+                기준일자 = 기준일자_dict.get(거래처)
+                
+                # 해당 거래처 첫 계산시 시작값 설정
+                if 거래처 not in 현재_미수금:
+                    # 기준일자 이전 거래는: 기초미수금 - 기준일자 당일 거래합계
+                    당일합계 = 기준일_거래합계.get(거래처, 0)
+                    현재_미수금[거래처] = 기초미수금_dict[거래처] - 당일합계
+                
+                # 기준일자 이전 거래 (당일 제외)
+                if 기준일자 and 날짜 < 기준일자:
+                    누적미수금_list.append(현재_미수금[거래처])
+                    continue
+                
+                # 기준일자 당일 및 이후 거래: 순차적으로 누적 계산
+                if 참조 == '=입금' or '입금' in 참조:
+                    현재_미수금[거래처] -= 공급가액
+                elif 참조 == '=외출' or (공급가액 > 0 and '입금' not in 참조 and '출금' not in 참조):
+                    현재_미수금[거래처] += 공급가액 + 부가세
+                
+                누적미수금_list.append(현재_미수금[거래처])
+            
+            df_sorted['미수금'] = 누적미수금_list
+            
+            # 원본 인덱스 순서로 복원 후 최신이 위로 오도록 역순 정렬
+            df_sorted = df_sorted.sort_values('원본인덱스', ascending=False)
+            df_sorted = df_sorted.drop(columns=['원본인덱스', '날짜_dt'])
+            
+            return df_sorted
         
         # 데이터 표시
         display_df = df_filtered.copy()
-        display_df['날짜'] = display_df['날짜'].dt.strftime('%Y-%m-%d')
         
-        # 미수금 컬럼 추가 (거래처별 현재 미수금)
-        display_df['미수금'] = display_df['거래처'].apply(거래처별_미수금_계산)
-        display_df['미수금'] = display_df['미수금'].apply(lambda x: f"{x:,.0f}" if x != 0 else "")
+        # 합계 컬럼 생성 또는 NaN 처리 (공급가액 + 부가세)
+        if '합계' not in display_df.columns:
+            display_df['합계'] = display_df['공급가액'].fillna(0) + display_df['부가세'].fillna(0)
+        else:
+            # 합계가 NaN인 경우 공급가액 + 부가세로 계산
+            display_df['합계'] = display_df['합계'].fillna(display_df['공급가액'].fillna(0) + display_df['부가세'].fillna(0))
         
-        display_df['공급가액'] = display_df['공급가액'].apply(lambda x: f"{x:,.0f}")
-        display_df['부가세'] = display_df['부가세'].apply(lambda x: f"{x:,.0f}")
+        # 누적 미수금 계산
+        display_df = 누적_미수금_계산(display_df)
+        
+        display_df['날짜'] = pd.to_datetime(display_df['날짜']).dt.strftime('%Y-%m-%d')
+        
+        # 미수금 포맷팅
+        display_df['미수금'] = display_df['미수금'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) and x != 0 else "")
+        
+        display_df['공급가액'] = display_df['공급가액'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+        display_df['부가세'] = display_df['부가세'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+        display_df['합계'] = display_df['합계'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
         
         # 비고 컬럼이 없으면 추가
         if '비고' not in display_df.columns:
             display_df['비고'] = ''
         
-        # 컬럼 순서 정리
-        표시_컬럼 = ['날짜', '거래처', '품목', '수량', '단가', '공급가액', '부가세', '참조', '미수금', '비고']
+        # 컬럼 순서 정리 (합계 추가)
+        표시_컬럼 = ['날짜', '거래처', '품목', '수량', '단가', '공급가액', '부가세', '합계', '참조', '미수금', '비고']
         표시_컬럼 = [col for col in 표시_컬럼 if col in display_df.columns]
         display_df = display_df[표시_컬럼]
         
@@ -2252,497 +2266,6 @@ elif menu == "📊 통계 분석":
                 st.metric("총 매출부가세", f"{부가세_df['매출부가세'].sum():,.0f}원")
                 st.metric("총 매입부가세", f"{부가세_df['매입부가세'].sum():,.0f}원")
                 st.metric("납부세액 (매출-매입)", f"{부가세_df['납부세액'].sum():,.0f}원")
-
-# ==================== 실적분석 (FIFO 원가계산) ====================
-elif menu == "📈 실적분석":
-    st.title("📈 실적분석 (FIFO 원가계산)")
-    
-    # 탭 생성
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📤 컴장부 데이터", "📦 FIFO 재고", "📊 제품별 실적", "🏢 거래처별 수익", "📈 연도별 비교"])
-    
-    # ===== 탭1: 컴장부 데이터 업로드 =====
-    with tab1:
-        st.markdown("### 📤 컴장부 데이터 업로드")
-        
-        st.info("""
-        **사용법:**
-        1. 컴장부 백업 폴더에서 **_$temp.dbf** 파일을 찾아주세요
-        2. ZIP으로 압축하여 업로드하면 자동으로 분석합니다
-        3. 분석된 데이터는 저장되어 다음에도 사용할 수 있어요
-        """)
-        
-        uploaded_file = st.file_uploader("컴장부 백업 파일 (ZIP)", type=['zip'], key="jangbu_upload")
-        
-        if uploaded_file:
-            try:
-                import zipfile
-                import tempfile
-                import io
-                
-                # DBF 읽기 라이브러리
-                try:
-                    from dbfread import DBF
-                except ImportError:
-                    st.error("dbfread 라이브러리가 필요합니다. 관리자에게 문의하세요.")
-                    st.stop()
-                
-                def decode_korean(text):
-                    if text is None:
-                        return ''
-                    if isinstance(text, str):
-                        try:
-                            return text.encode('latin1').decode('cp949')
-                        except:
-                            return text
-                    return str(text)
-                
-                with st.spinner("컴장부 데이터 분석 중..."):
-                    # ZIP 파일 압축 해제
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        with zipfile.ZipFile(io.BytesIO(uploaded_file.read()), 'r') as zip_ref:
-                            zip_ref.extractall(tmpdir)
-                        
-                        # DBF 파일 찾기
-                        dbf_file = None
-                        for root, dirs, files in os.walk(tmpdir):
-                            for file in files:
-                                if file.lower().endswith('.dbf') and 'temp' in file.lower():
-                                    dbf_file = os.path.join(root, file)
-                                    break
-                        
-                        if not dbf_file:
-                            st.error("DBF 파일을 찾을 수 없습니다.")
-                            st.stop()
-                        
-                        # DBF 읽기
-                        table = DBF(dbf_file, encoding='latin1', ignore_missing_memofile=True)
-                        
-                        records = []
-                        for record in table:
-                            if record.get('INDATE') and hasattr(record.get('INDATE'), 'year'):
-                                rec = {
-                                    '날짜': record['INDATE'],
-                                    '거래처': decode_korean(record.get('GULAECHO', '')),
-                                    '품목': decode_korean(record.get('NAEYONG', '')),
-                                    '수량': record.get('SULAYNG') or 0,
-                                    '단가': record.get('DANGA') or 0,
-                                    '공급가액': record.get('TOTAL') or 0,
-                                    '부가세': record.get('TAX') or 0,
-                                    '참조': decode_korean(record.get('NA_CODEC', '')),
-                                }
-                                records.append(rec)
-                        
-                        if records:
-                            jangbu_df = pd.DataFrame(records)
-                            jangbu_df['날짜'] = pd.to_datetime(jangbu_df['날짜'])
-                            st.session_state.jangbu_df = jangbu_df
-                            save_jangbu_data()
-                            st.success(f"✅ {len(jangbu_df):,}건 데이터 로드 완료!")
-                            st.rerun()
-                        else:
-                            st.error("데이터를 읽을 수 없습니다.")
-            except Exception as e:
-                st.error(f"파일 처리 오류: {str(e)}")
-        
-        st.markdown("---")
-        
-        # 현재 로드된 데이터 현황
-        jangbu_df = st.session_state.jangbu_df
-        
-        if len(jangbu_df) > 0:
-            st.markdown("### 📊 현재 로드된 데이터")
-            
-            # 연도별 현황
-            jangbu_df['년도'] = pd.to_datetime(jangbu_df['날짜']).dt.year
-            연도별 = jangbu_df.groupby('년도').size()
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("총 거래 건수", f"{len(jangbu_df):,}건")
-            with col2:
-                st.metric("데이터 기간", f"{jangbu_df['날짜'].min().strftime('%Y-%m-%d')} ~ {jangbu_df['날짜'].max().strftime('%Y-%m-%d')}")
-            with col3:
-                st.metric("연도 수", f"{len(연도별)}개")
-            
-            st.markdown("#### 연도별 거래 건수")
-            for 년도, 건수 in 연도별.items():
-                st.write(f"- {년도}년: {건수:,}건")
-            
-            # 참조별 현황
-            st.markdown("#### 참조(거래유형)별 현황")
-            참조별 = jangbu_df.groupby('참조').agg({'공급가액': ['count', 'sum']}).round(0)
-            참조별.columns = ['건수', '금액']
-            st.dataframe(참조별)
-        else:
-            st.info("아직 로드된 컴장부 데이터가 없습니다. ZIP 파일을 업로드해주세요.")
-    
-    # ===== 탭2: FIFO 재고 =====
-    with tab2:
-        st.markdown("### 📦 FIFO 재고 현황")
-        
-        jangbu_df = st.session_state.jangbu_df
-        
-        if len(jangbu_df) == 0:
-            st.warning("먼저 '컴장부 데이터' 탭에서 데이터를 업로드해주세요.")
-        else:
-            # 연도 선택
-            jangbu_df['년도'] = pd.to_datetime(jangbu_df['날짜']).dt.year
-            연도_목록 = sorted(jangbu_df['년도'].unique(), reverse=True)
-            선택_연도 = st.selectbox("기준 연도", 연도_목록, key="fifo_year")
-            
-            # 해당 연도까지의 데이터로 FIFO 계산
-            기준일 = f"{선택_연도}-12-31"
-            df_until = jangbu_df[jangbu_df['날짜'] <= 기준일].copy()
-            
-            # 매입 (외입)
-            매입_df = df_until[df_until['참조'] == '외입'].copy()
-            매입_df['수량'] = 매입_df['수량'].abs()
-            매입_df['공급가액'] = 매입_df['공급가액'].abs()
-            매입_df['매입단가'] = (매입_df['공급가액'] / 매입_df['수량'].replace(0, 1)).round(0)
-            
-            # 판매 (외출)
-            판매_df = df_until[df_until['참조'] == '외출'].copy()
-            판매_df['수량'] = 판매_df['수량'].abs()
-            
-            # 품목별 매입/판매 집계
-            품목별_매입 = 매입_df.groupby('품목')['수량'].sum()
-            품목별_판매 = 판매_df.groupby('품목')['수량'].sum()
-            
-            전체_품목 = set(품목별_매입.index) | set(품목별_판매.index)
-            
-            재고_목록 = []
-            for 품목 in 전체_품목:
-                매입수량 = 품목별_매입.get(품목, 0)
-                판매수량 = 품목별_판매.get(품목, 0)
-                잔여수량 = 매입수량 - 판매수량
-                
-                # 최근 매입 단가
-                품목_매입 = 매입_df[매입_df['품목'] == 품목].sort_values('날짜', ascending=False)
-                최근_매입단가 = 품목_매입.iloc[0]['매입단가'] if len(품목_매입) > 0 else 0
-                
-                재고_목록.append({
-                    '품목': 품목,
-                    '총매입': 매입수량,
-                    '총판매': 판매수량,
-                    '잔여수량': 잔여수량,
-                    '최근매입단가': 최근_매입단가,
-                    '재고금액': 잔여수량 * 최근_매입단가
-                })
-            
-            재고_df = pd.DataFrame(재고_목록)
-            
-            # 재고 있는 것만
-            실재고 = 재고_df[재고_df['잔여수량'] > 0].sort_values('재고금액', ascending=False)
-            
-            # 요약 통계
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("재고 품목 수", f"{len(실재고)}개")
-            with col2:
-                st.metric("총 재고 수량", f"{실재고['잔여수량'].sum():,.0f}장")
-            with col3:
-                st.metric("총 재고 금액", f"{실재고['재고금액'].sum():,.0f}원")
-            
-            st.markdown("---")
-            
-            # 재고 목록
-            st.markdown(f"#### 📋 {선택_연도}년 12월 31일 기준 재고")
-            
-            display_재고 = 실재고.copy()
-            for col in ['총매입', '총판매', '잔여수량']:
-                display_재고[col] = display_재고[col].apply(lambda x: f"{x:,.0f}")
-            for col in ['최근매입단가', '재고금액']:
-                display_재고[col] = display_재고[col].apply(lambda x: f"{x:,.0f}원")
-            
-            st.dataframe(display_재고, use_container_width=True, hide_index=True)
-    
-    # ===== 탭3: 제품별 실적 =====
-    with tab3:
-        st.markdown("### 📊 제품별 실적")
-        
-        jangbu_df = st.session_state.jangbu_df
-        
-        if len(jangbu_df) == 0:
-            st.warning("먼저 '컴장부 데이터' 탭에서 데이터를 업로드해주세요.")
-        else:
-            # 연도 선택
-            jangbu_df['년도'] = pd.to_datetime(jangbu_df['날짜']).dt.year
-            연도_목록 = sorted(jangbu_df['년도'].unique(), reverse=True)
-            선택_연도 = st.selectbox("분석 연도", 연도_목록, key="product_year")
-            
-            # 해당 연도 판매 데이터
-            df_year = jangbu_df[(jangbu_df['년도'] == 선택_연도) & (jangbu_df['참조'] == '외출')].copy()
-            df_year['수량'] = df_year['수량'].abs()
-            df_year['월'] = pd.to_datetime(df_year['날짜']).dt.month
-            df_year['주'] = pd.to_datetime(df_year['날짜']).dt.isocalendar().week
-            
-            # 기간 선택
-            기간_선택 = st.radio("분석 기간", ["월별", "주별", "일별"], horizontal=True, key="period_select")
-            
-            if 기간_선택 == "월별":
-                # 품목별 월별 판매
-                품목별_월별 = df_year.pivot_table(
-                    index='품목', 
-                    columns='월', 
-                    values='공급가액', 
-                    aggfunc='sum',
-                    fill_value=0
-                )
-                품목별_월별['합계'] = 품목별_월별.sum(axis=1)
-                품목별_월별 = 품목별_월별.sort_values('합계', ascending=False)
-                
-                st.markdown(f"#### {선택_연도}년 월별 판매 현황 (금액)")
-                
-                # TOP 20만 표시
-                display_df = 품목별_월별.head(20).copy()
-                for col in display_df.columns:
-                    display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
-                st.dataframe(display_df, use_container_width=True)
-                
-                # 수량 기준
-                st.markdown("---")
-                품목별_월별_수량 = df_year.pivot_table(
-                    index='품목', 
-                    columns='월', 
-                    values='수량', 
-                    aggfunc='sum',
-                    fill_value=0
-                )
-                품목별_월별_수량['합계'] = 품목별_월별_수량.sum(axis=1)
-                품목별_월별_수량 = 품목별_월별_수량.sort_values('합계', ascending=False)
-                
-                st.markdown(f"#### {선택_연도}년 월별 판매 현황 (수량)")
-                display_df2 = 품목별_월별_수량.head(20).copy()
-                for col in display_df2.columns:
-                    display_df2[col] = display_df2[col].apply(lambda x: f"{x:,.0f}")
-                st.dataframe(display_df2, use_container_width=True)
-                
-            elif 기간_선택 == "주별":
-                품목별_주별 = df_year.pivot_table(
-                    index='품목', 
-                    columns='주', 
-                    values='공급가액', 
-                    aggfunc='sum',
-                    fill_value=0
-                )
-                품목별_주별['합계'] = 품목별_주별.sum(axis=1)
-                품목별_주별 = 품목별_주별.sort_values('합계', ascending=False)
-                
-                st.markdown(f"#### {선택_연도}년 주별 판매 현황")
-                display_df = 품목별_주별.head(20).copy()
-                st.dataframe(display_df, use_container_width=True)
-                
-            else:  # 일별
-                # 월 선택
-                월_선택 = st.selectbox("월 선택", range(1, 13), key="day_month")
-                df_month = df_year[df_year['월'] == 월_선택].copy()
-                df_month['일'] = pd.to_datetime(df_month['날짜']).dt.day
-                
-                품목별_일별 = df_month.pivot_table(
-                    index='품목', 
-                    columns='일', 
-                    values='공급가액', 
-                    aggfunc='sum',
-                    fill_value=0
-                )
-                품목별_일별['합계'] = 품목별_일별.sum(axis=1)
-                품목별_일별 = 품목별_일별.sort_values('합계', ascending=False)
-                
-                st.markdown(f"#### {선택_연도}년 {월_선택}월 일별 판매 현황")
-                display_df = 품목별_일별.head(20).copy()
-                st.dataframe(display_df, use_container_width=True)
-            
-            # 베스트셀러 TOP 10
-            st.markdown("---")
-            st.markdown(f"#### 🏆 {선택_연도}년 베스트셀러 TOP 10")
-            
-            베스트 = df_year.groupby('품목').agg({
-                '수량': 'sum',
-                '공급가액': 'sum'
-            }).sort_values('수량', ascending=False).head(10)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**수량 기준**")
-                for i, (품목, row) in enumerate(베스트.iterrows(), 1):
-                    st.write(f"{i}. {품목[:30]} - {row['수량']:,.0f}장")
-            with col2:
-                st.markdown("**금액 기준**")
-                베스트_금액 = df_year.groupby('품목')['공급가액'].sum().sort_values(ascending=False).head(10)
-                for i, (품목, 금액) in enumerate(베스트_금액.items(), 1):
-                    st.write(f"{i}. {품목[:30]} - {금액:,.0f}원")
-    
-    # ===== 탭4: 거래처별 수익 =====
-    with tab4:
-        st.markdown("### 🏢 거래처별 수익 분석")
-        
-        jangbu_df = st.session_state.jangbu_df
-        
-        if len(jangbu_df) == 0:
-            st.warning("먼저 '컴장부 데이터' 탭에서 데이터를 업로드해주세요.")
-        else:
-            # 연도 선택
-            jangbu_df['년도'] = pd.to_datetime(jangbu_df['날짜']).dt.year
-            연도_목록 = sorted(jangbu_df['년도'].unique(), reverse=True)
-            선택_연도 = st.selectbox("분석 연도", 연도_목록, key="customer_year")
-            
-            # 해당 연도 데이터
-            df_year = jangbu_df[jangbu_df['년도'] == 선택_연도].copy()
-            
-            # 판매 (외출)
-            판매_df = df_year[df_year['참조'] == '외출'].copy()
-            판매_df['수량'] = 판매_df['수량'].abs()
-            
-            # 매입 (외입) - FIFO 평균 원가 계산용
-            매입_df = df_year[df_year['참조'] == '외입'].copy()
-            매입_df['수량'] = 매입_df['수량'].abs()
-            매입_df['공급가액'] = 매입_df['공급가액'].abs()
-            
-            # 품목별 평균 매입단가
-            품목별_매입 = 매입_df.groupby('품목').agg({
-                '수량': 'sum',
-                '공급가액': 'sum'
-            })
-            품목별_매입['평균매입단가'] = (품목별_매입['공급가액'] / 품목별_매입['수량'].replace(0, 1)).round(0)
-            
-            # 판매 데이터에 원가 추가
-            판매_df['매입단가'] = 판매_df['품목'].map(품목별_매입['평균매입단가']).fillna(0)
-            판매_df['원가'] = 판매_df['수량'] * 판매_df['매입단가']
-            판매_df['마진'] = 판매_df['공급가액'] - 판매_df['원가']
-            판매_df['마진율'] = (판매_df['마진'] / 판매_df['공급가액'].replace(0, 1) * 100).round(1)
-            
-            # 거래처별 집계
-            거래처별 = 판매_df.groupby('거래처').agg({
-                '공급가액': 'sum',
-                '원가': 'sum',
-                '마진': 'sum',
-                '수량': 'sum'
-            }).round(0)
-            거래처별['마진율'] = (거래처별['마진'] / 거래처별['공급가액'].replace(0, 1) * 100).round(1)
-            거래처별 = 거래처별.sort_values('공급가액', ascending=False)
-            
-            # 요약 통계
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("총 매출", f"{거래처별['공급가액'].sum():,.0f}원")
-            with col2:
-                st.metric("총 원가", f"{거래처별['원가'].sum():,.0f}원")
-            with col3:
-                st.metric("총 마진", f"{거래처별['마진'].sum():,.0f}원")
-            with col4:
-                총_마진율 = (거래처별['마진'].sum() / 거래처별['공급가액'].sum() * 100) if 거래처별['공급가액'].sum() > 0 else 0
-                st.metric("평균 마진율", f"{총_마진율:.1f}%")
-            
-            st.markdown("---")
-            
-            # 거래처별 목록
-            st.markdown(f"#### 📋 {선택_연도}년 거래처별 수익 (매출 기준 TOP 30)")
-            
-            display_거래처 = 거래처별.head(30).copy()
-            display_거래처 = display_거래처.rename(columns={
-                '공급가액': '매출',
-                '수량': '판매수량'
-            })
-            for col in ['매출', '원가', '마진']:
-                display_거래처[col] = display_거래처[col].apply(lambda x: f"{x:,.0f}원")
-            display_거래처['마진율'] = display_거래처['마진율'].apply(lambda x: f"{x:.1f}%")
-            display_거래처['판매수량'] = display_거래처['판매수량'].apply(lambda x: f"{x:,.0f}")
-            
-            st.dataframe(display_거래처, use_container_width=True)
-            
-            # 특정 거래처 상세
-            st.markdown("---")
-            st.markdown("#### 🔍 거래처 상세 분석")
-            
-            거래처_목록 = 거래처별.index.tolist()
-            선택_거래처 = st.selectbox("거래처 선택", [""] + 거래처_목록, key="detail_customer")
-            
-            if 선택_거래처:
-                거래처_판매 = 판매_df[판매_df['거래처'] == 선택_거래처].copy()
-                
-                # 품목별 집계
-                품목별 = 거래처_판매.groupby('품목').agg({
-                    '공급가액': 'sum',
-                    '원가': 'sum',
-                    '마진': 'sum',
-                    '수량': 'sum'
-                }).sort_values('공급가액', ascending=False)
-                
-                st.markdown(f"**{선택_거래처} 품목별 판매 현황**")
-                
-                display_품목 = 품목별.head(20).copy()
-                for col in ['공급가액', '원가', '마진']:
-                    display_품목[col] = display_품목[col].apply(lambda x: f"{x:,.0f}원")
-                display_품목['수량'] = display_품목['수량'].apply(lambda x: f"{x:,.0f}")
-                
-                st.dataframe(display_품목, use_container_width=True)
-    
-    # ===== 탭5: 연도별 비교 =====
-    with tab5:
-        st.markdown("### 📈 연도별 비교 분석")
-        
-        jangbu_df = st.session_state.jangbu_df
-        
-        if len(jangbu_df) == 0:
-            st.warning("먼저 '컴장부 데이터' 탭에서 데이터를 업로드해주세요.")
-        else:
-            jangbu_df['년도'] = pd.to_datetime(jangbu_df['날짜']).dt.year
-            jangbu_df['월'] = pd.to_datetime(jangbu_df['날짜']).dt.month
-            연도_목록 = sorted(jangbu_df['년도'].unique())
-            
-            if len(연도_목록) < 2:
-                st.info("2개 이상의 연도 데이터가 필요합니다.")
-            else:
-                # 비교할 연도 선택
-                col1, col2 = st.columns(2)
-                with col1:
-                    연도1 = st.selectbox("기준 연도", 연도_목록[:-1], index=len(연도_목록)-2, key="year1")
-                with col2:
-                    연도2 = st.selectbox("비교 연도", 연도_목록[1:], index=len(연도_목록)-2, key="year2")
-                
-                # 연도별 월별 매출 (외출)
-                판매_df = jangbu_df[jangbu_df['참조'] == '외출'].copy()
-                
-                df1 = 판매_df[판매_df['년도'] == 연도1].groupby('월')['공급가액'].sum()
-                df2 = 판매_df[판매_df['년도'] == 연도2].groupby('월')['공급가액'].sum()
-                
-                비교_df = pd.DataFrame({
-                    f'{연도1}년': df1,
-                    f'{연도2}년': df2
-                }).fillna(0)
-                비교_df['증감'] = 비교_df[f'{연도2}년'] - 비교_df[f'{연도1}년']
-                비교_df['증감률'] = ((비교_df[f'{연도2}년'] / 비교_df[f'{연도1}년'].replace(0, 1) - 1) * 100).round(1)
-                
-                # 차트
-                st.markdown(f"#### 📊 {연도1}년 vs {연도2}년 월별 매출 비교")
-                
-                fig = go.Figure()
-                fig.add_trace(go.Bar(name=f'{연도1}년', x=비교_df.index, y=비교_df[f'{연도1}년'], marker_color='#1976D2'))
-                fig.add_trace(go.Bar(name=f'{연도2}년', x=비교_df.index, y=비교_df[f'{연도2}년'], marker_color='#388E3C'))
-                fig.update_layout(barmode='group', xaxis_title='월', yaxis_title='매출액')
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # 테이블
-                st.markdown("#### 📋 월별 상세 비교")
-                
-                display_비교 = 비교_df.copy()
-                for col in [f'{연도1}년', f'{연도2}년', '증감']:
-                    display_비교[col] = display_비교[col].apply(lambda x: f"{x:,.0f}원")
-                display_비교['증감률'] = display_비교['증감률'].apply(lambda x: f"{x:+.1f}%" if x != 0 else "0%")
-                
-                st.dataframe(display_비교, use_container_width=True)
-                
-                # 연간 합계
-                st.markdown("---")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric(f"{연도1}년 총 매출", f"{df1.sum():,.0f}원")
-                with col2:
-                    st.metric(f"{연도2}년 총 매출", f"{df2.sum():,.0f}원")
-                with col3:
-                    증감 = df2.sum() - df1.sum()
-                    증감률 = ((df2.sum() / df1.sum() - 1) * 100) if df1.sum() > 0 else 0
-                    st.metric("증감", f"{증감:,.0f}원", f"{증감률:+.1f}%")
 
 # ==================== 외상 관리 ====================
 elif menu == "💰 외상 관리":
@@ -4981,15 +4504,26 @@ elif menu == "📝 영업 일지":
     # 상담 일지 파일
     journal_file = data_dir / "sales_journal.csv"
     if journal_file.exists():
-        journal_df = pd.read_csv(journal_file)
-        journal_df['날짜'] = pd.to_datetime(journal_df['날짜'])
+        try:
+            journal_df = pd.read_csv(journal_file)
+            if len(journal_df) > 0 and '날짜' in journal_df.columns:
+                journal_df['날짜'] = pd.to_datetime(journal_df['날짜'], errors='coerce')
+            else:
+                journal_df = pd.DataFrame(columns=['날짜', '거래처명', '거래처구분', '상담내용', '다음액션', '영업단계', '작성일시'])
+        except Exception as e:
+            st.error(f"⚠️ 영업일지 파일 로드 오류: {e}")
+            journal_df = pd.DataFrame(columns=['날짜', '거래처명', '거래처구분', '상담내용', '다음액션', '영업단계', '작성일시'])
     else:
         journal_df = pd.DataFrame(columns=['날짜', '거래처명', '거래처구분', '상담내용', '다음액션', '영업단계', '작성일시'])
     
     # 잠재거래처 파일
     prospects_file = data_dir / "prospects.csv"
     if prospects_file.exists():
-        prospects_df = pd.read_csv(prospects_file)
+        try:
+            prospects_df = pd.read_csv(prospects_file)
+        except Exception as e:
+            st.error(f"⚠️ 잠재거래처 파일 로드 오류: {e}")
+            prospects_df = pd.DataFrame(columns=['업체명', '지역', '업종', '전화번호', '주소', '담당자', '영업단계', '메모', '등록일'])
     else:
         prospects_df = pd.DataFrame(columns=['업체명', '지역', '업종', '전화번호', '주소', '담당자', '영업단계', '메모', '등록일'])
     
@@ -5133,20 +4667,18 @@ elif menu == "📝 영업 일지":
         
         # 상단 통계
         if len(prospects_df) > 0:
-            col_s1, col_s2, col_s3, col_s4, col_s5, col_s6 = st.columns(6)
+            col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
             총_건수 = len(prospects_df)
-            거래중 = len(prospects_df[prospects_df['영업단계'] == '거래중'])
-            거래중지 = len(prospects_df[prospects_df['영업단계'] == '거래중지'])
             미방문 = len(prospects_df[prospects_df['영업단계'] == '미방문'])
             유망 = len(prospects_df[prospects_df['영업단계'] == '유망'])
             상담중 = len(prospects_df[prospects_df['영업단계'].isin(['상담중', '견적', '협상'])])
+            탈락 = len(prospects_df[prospects_df['영업단계'] == '탈락'])
             
             col_s1.metric("📊 전체", f"{총_건수:,}개")
-            col_s2.metric("🟢 거래중", f"{거래중:,}개")
-            col_s3.metric("🟡 거래중지", f"{거래중지:,}개")
-            col_s4.metric("🔵 미방문", f"{미방문:,}개")
-            col_s5.metric("⭐ 유망", f"{유망:,}개")
-            col_s6.metric("💬 상담중", f"{상담중:,}개")
+            col_s2.metric("🆕 미방문", f"{미방문:,}개")
+            col_s3.metric("⭐ 유망", f"{유망:,}개")
+            col_s4.metric("💬 상담중", f"{상담중:,}개")
+            col_s5.metric("❌ 탈락", f"{탈락:,}개")
         
         st.markdown("---")
         
@@ -5205,7 +4737,7 @@ elif menu == "📝 영업 일지":
                     선택_업종 = st.selectbox("업종", 업종_목록, key="filter_type")
                 
                 with col_f3:
-                    단계_목록 = ['전체', '거래중', '거래중지', '미방문', '유망', '상담중', '견적', '협상', '보류', '탈락']
+                    단계_목록 = ['전체', '미방문', '유망', '상담중', '견적', '협상', '보류', '탈락']
                     선택_단계 = st.selectbox("영업단계", 단계_목록, key="filter_stage")
                 
                 with col_f4:
@@ -5260,7 +4792,7 @@ elif menu == "📝 영업 일지":
                 for idx, row in 페이지_df.iterrows():
                     실제_idx = row.name  # 원본 인덱스
                     단계_색상 = {
-                        '거래중': '🟢', '거래중지': '🟡', '미방문': '🔵', '유망': '⭐', '상담중': '💬', 
+                        '미방문': '🔵', '유망': '⭐', '상담중': '💬', 
                         '견적': '📋', '협상': '🤝', '보류': '⏸️', '탈락': '❌'
                     }
                     영업단계 = row.get('영업단계', '미방문')
@@ -5450,11 +4982,8 @@ elif menu == "📝 영업 일지":
     # ===== 탭3: 엑셀 업로드 =====
     with tab3:
         st.markdown("### 📤 전국 잠재거래처 일괄 업로드")
-        
-        # 현재 잠재거래처 수 동적 표시
-        현재_거래처수 = len(st.session_state.get('customers_df', pd.DataFrame()))
-        st.info(f"""
-        **전국 {현재_거래처수:,}개 잠재거래처 업로드 가능!**
+        st.info("""
+        **전국 6,618개 잠재거래처 업로드 가능!**
         
         소상공인시장진흥공단 데이터 또는 직접 정리한 엑셀을 업로드하세요.
         
@@ -5987,132 +5516,89 @@ elif menu == "🔧 설정":
                     st.success("데이터가 초기화되었습니다.")
                     st.rerun()
     
-    # ===== 탭3: 외상 현황 (기초미수금 입력 + 자동 계산) =====
+    # ===== 탭3: 외상 현황 (자동 계산) =====
     with tab3:
-        st.markdown("### 💰 기초미수금 설정 (12월 21일 기준)")
+        st.markdown("### 💰 외상 현황 (실시간 자동 계산)")
         
-        st.info("""
-        **📋 사용법:**
-        1. 컴장부에서 12월 21일 기준 거래처별 외상잔액 확인
-        2. 아래에서 거래처별 기초미수금 입력
-        3. 이후 거래 입력하면 자동으로 누적 계산됩니다!
+        st.success("""
+        **✅ 자동 계산 방식:**
+        - **미수금** = 판매(양수) + 부가세 - 입금 → 판매처에서 받을 돈
+        - **미지급금** = |매입(음수)| + |부가세| - |출금| → 매입처에 줄 돈
+        - 컴장부 전체 데이터 기반으로 자동 계산됩니다.
         """)
         
         st.markdown("---")
         
-        # ===== 기초미수금 입력 =====
-        st.markdown("#### ➕ 기초미수금 입력")
-        
         df = st.session_state.ledger_df
-        거래처_list = sorted(df['거래처'].dropna().unique().tolist()) if len(df) > 0 else []
         
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            입력_거래처 = st.selectbox("거래처 선택", [""] + 거래처_list, key="base_recv_customer")
-        with col2:
-            입력_미수금 = st.number_input("미수금 (원)", value=0, step=10000, format="%d", key="base_recv_amount", help="받을 돈은 양수, 선수금(미리 받은 돈)은 음수")
-        with col3:
-            입력_기준일 = st.date_input("기준일", value=pd.to_datetime("2025-12-21"), key="base_recv_date")
-        
-        if st.button("💾 기초미수금 저장", type="primary", key="save_base_recv"):
-            if 입력_거래처:
-                # 기존 데이터에서 해당 거래처 제거 후 새로 추가
-                base_df = st.session_state.base_receivables_df
-                base_df = base_df[base_df['거래처'] != 입력_거래처]
-                
-                new_row = pd.DataFrame([{
-                    '거래처': 입력_거래처,
-                    '기초미수금': 입력_미수금,
-                    '기준일자': 입력_기준일.strftime('%Y-%m-%d')
-                }])
-                
-                st.session_state.base_receivables_df = pd.concat([base_df, new_row], ignore_index=True)
-                save_base_receivables()
-                st.success(f"✅ {입력_거래처} 기초미수금 {입력_미수금:,}원 저장 완료!")
-                st.rerun()
-            else:
-                st.error("❌ 거래처를 선택해주세요.")
-        
-        st.markdown("---")
-        
-        # ===== 기초미수금 목록 =====
-        st.markdown("#### 📋 기초미수금 목록")
-        
-        base_df = st.session_state.base_receivables_df
-        
-        if len(base_df) > 0:
-            # 미수금 있는 거래처만 표시
-            미수금_df = base_df[base_df['기초미수금'] != 0].copy()
+        if len(df) > 0:
+            # 미수금/미지급금 계산
+            미수금_결과 = calculate_all_receivables(df)
+            미지급금_결과 = calculate_all_payables(df)
             
-            if len(미수금_df) > 0:
+            # 요약 통계
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                미수금_df = 미수금_결과[미수금_결과['미수금'] > 0] if len(미수금_결과) > 0 else pd.DataFrame()
+                총_미수금 = 미수금_df['미수금'].sum() if len(미수금_df) > 0 else 0
+                st.metric("총 미수금", f"{총_미수금:,.0f}원", help="판매처에서 받을 돈")
+            
+            with col2:
+                st.metric("미수 거래처", f"{len(미수금_df)}개")
+            
+            with col3:
+                미지급금_df = 미지급금_결과[미지급금_결과['미지급금'] > 0] if len(미지급금_결과) > 0 else pd.DataFrame()
+                총_미지급금 = 미지급금_df['미지급금'].sum() if len(미지급금_df) > 0 else 0
+                st.metric("총 미지급금", f"{총_미지급금:,.0f}원", help="매입처에 줄 돈")
+            
+            with col4:
+                st.metric("미지급 거래처", f"{len(미지급금_df)}개")
+            
+            st.markdown("---")
+            
+            # 거래처별 조회
+            st.markdown("#### 🔍 거래처별 외상 조회")
+            거래처_list = sorted(df['거래처'].dropna().unique().tolist())
+            선택_거래처 = st.selectbox("거래처 선택", [""] + 거래처_list, key="settings_recv_search")
+            
+            if 선택_거래처:
+                거래처_미수금 = calculate_receivable(선택_거래처)
+                거래처_미지급금 = calculate_payable(선택_거래처)
+                
                 col1, col2 = st.columns(2)
+                
                 with col1:
-                    총_미수금 = 미수금_df[미수금_df['기초미수금'] > 0]['기초미수금'].sum()
-                    st.metric("총 기초미수금", f"{총_미수금:,.0f}원")
+                    if 거래처_미수금 > 0:
+                        st.warning(f"⚠️ **미수금**: {거래처_미수금:,.0f}원")
+                    elif 거래처_미수금 < 0:
+                        st.info(f"💰 **선수금**: {abs(거래처_미수금):,.0f}원")
+                    else:
+                        st.success("✅ 미수금 없음")
+                
                 with col2:
-                    st.metric("등록 거래처", f"{len(미수금_df)}개")
+                    if 거래처_미지급금 > 0:
+                        st.error(f"💸 **미지급금**: {거래처_미지급금:,.0f}원")
+                    elif 거래처_미지급금 < 0:
+                        st.info(f"💵 **선급금**: {abs(거래처_미지급금):,.0f}원")
+                    else:
+                        st.success("✅ 미지급금 없음")
                 
-                # 목록 표시
-                display_df = 미수금_df.copy()
-                display_df['기초미수금'] = display_df['기초미수금'].apply(lambda x: f"{x:,.0f}원")
-                display_df = display_df.sort_values('거래처')
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
-                
-                # 삭제 기능
-                st.markdown("---")
-                st.markdown("#### 🗑️ 기초미수금 삭제")
-                삭제_거래처 = st.selectbox("삭제할 거래처", [""] + 미수금_df['거래처'].tolist(), key="delete_base_recv")
-                if 삭제_거래처 and st.button("🗑️ 삭제", key="delete_base_recv_btn"):
-                    st.session_state.base_receivables_df = base_df[base_df['거래처'] != 삭제_거래처]
-                    save_base_receivables()
-                    st.success(f"✅ {삭제_거래처} 기초미수금 삭제 완료!")
-                    st.rerun()
-            else:
-                st.info("등록된 기초미수금이 없습니다.")
+                # 최근 거래 내역
+                거래처_df = df[df['거래처'] == 선택_거래처].sort_values('날짜', ascending=False)
+                if len(거래처_df) > 0:
+                    st.markdown(f"#### 📋 {선택_거래처} 최근 거래 내역")
+                    
+                    display_거래 = 거래처_df.head(20).copy()
+                    display_거래['날짜'] = pd.to_datetime(display_거래['날짜']).dt.strftime('%Y-%m-%d')
+                    display_거래 = display_거래[['날짜', '품목', '공급가액', '부가세']]
+                    
+                    for col in ['공급가액', '부가세']:
+                        display_거래[col] = display_거래[col].apply(lambda x: f"{x:,.0f}")
+                    
+                    st.dataframe(display_거래, use_container_width=True, hide_index=True)
         else:
-            st.info("등록된 기초미수금이 없습니다.")
-        
-        st.markdown("---")
-        
-        # ===== 엑셀 일괄 업로드 =====
-        st.markdown("#### 📤 엑셀 일괄 업로드")
-        st.caption("컴장부에서 외상잔액 엑셀 파일을 업로드하세요. (컬럼: 거래처, 기초미수금)")
-        
-        uploaded_file = st.file_uploader("엑셀 파일 선택", type=['xlsx', 'xls', 'csv'], key="base_recv_upload")
-        
-        if uploaded_file:
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    upload_df = pd.read_csv(uploaded_file)
-                else:
-                    upload_df = pd.read_excel(uploaded_file)
-                
-                st.markdown("**미리보기:**")
-                st.dataframe(upload_df.head(10))
-                
-                # 컬럼 매핑
-                col1, col2 = st.columns(2)
-                with col1:
-                    거래처_컬럼 = st.selectbox("거래처 컬럼", upload_df.columns.tolist(), key="map_customer")
-                with col2:
-                    미수금_컬럼 = st.selectbox("미수금 컬럼", upload_df.columns.tolist(), key="map_amount")
-                
-                if st.button("📥 일괄 등록", type="primary", key="bulk_upload_recv"):
-                    # 데이터 변환
-                    new_base_df = pd.DataFrame()
-                    new_base_df['거래처'] = upload_df[거래처_컬럼].astype(str)
-                    new_base_df['기초미수금'] = pd.to_numeric(upload_df[미수금_컬럼], errors='coerce').fillna(0)
-                    new_base_df['기준일자'] = '2025-12-21'
-                    
-                    # 0이 아닌 것만 저장
-                    new_base_df = new_base_df[new_base_df['기초미수금'] != 0]
-                    
-                    st.session_state.base_receivables_df = new_base_df
-                    save_base_receivables()
-                    st.success(f"✅ {len(new_base_df)}개 거래처 기초미수금 등록 완료!")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"파일 읽기 오류: {str(e)}")
+            st.info("아직 거래 데이터가 없습니다.")
     
     # ===== 탭4: 통계 =====
     with tab4:
