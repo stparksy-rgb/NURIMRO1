@@ -669,7 +669,7 @@ INVENTORY_FILE = "data/inventory.csv"
 COMPANY_FILE = "data/company_info.csv"
 
 # 세션 상태 초기화
-if 'ledger_df' not in st.session_state:
+if True:  # 항상 최신 파일 읽기
     if os.path.exists(DATA_FILE):
         try:
             st.session_state.ledger_df = pd.read_csv(DATA_FILE)
